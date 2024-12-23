@@ -1,3 +1,5 @@
+import os.path
+
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
@@ -19,6 +21,7 @@ LEARNING_RATE = 0.0005
 BATCH_SIZE = 256
 NUM_EPOCHS = 30
 NUM_CLASSES = 10
+TRAINED_MODEL_PATH = 'autoencoder.pth'
 
 
 def get_dataloaders_mnist(batch_size, num_workers=0, train_transforms=None, test_transforms=None):
@@ -60,7 +63,8 @@ def train_autoencoder(num_epochs, model, optimizer,
                         train_loader, loss_fn=None,
                          logging_interval=100,
                          skip_epoch_stats=False,
-                         save_model=None):
+                         save_model=None,
+                         device='cpu'):
     log_dict = {'train_loss_per_batch': [],
                 'train_loss_per_epoch': []}
     if loss_fn is None:
@@ -70,6 +74,7 @@ def train_autoencoder(num_epochs, model, optimizer,
         model.train()
         for batch_idx, (features, _) in enumerate(train_loader):
             # FORWARD AND BACK PROP
+            features = features.to(device)
             logits = model(features)
             loss = loss_fn(logits, features)
             optimizer.zero_grad()
@@ -98,6 +103,14 @@ def train_autoencoder(num_epochs, model, optimizer,
 
 
 if __name__ == '__main__':
+    # If there is a GPU available, use it
+    if torch.cuda.is_available():
+        torch.backends.cudnn.deterministic = True
+        DEVICE = 'cuda'
+    else:
+        DEVICE = 'cpu'
+    device = torch.device(DEVICE)
+
     train_loader, valid_loader, test_loader = get_dataloaders_mnist(batch_size=BATCH_SIZE, num_workers=2)
 
     # Checking the dataset
@@ -109,31 +122,44 @@ if __name__ == '__main__':
         break
 
     model = AutoEncoder()
-    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    model.to(device)
+    # If there is a trained model, load it
+    if os.path.exists(TRAINED_MODEL_PATH):
+        model.load_state_dict(torch.load(TRAINED_MODEL_PATH, weights_only=True))
+        print("\n====================================================")
+        print("Model loaded from:", TRAINED_MODEL_PATH)
+        print("====================================================")
+    else:
+        print("Training the model")
+        optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-    log_dict = train_autoencoder(num_epochs=NUM_EPOCHS, model=model,
-                                 optimizer=optimizer,
-                                 train_loader=train_loader,
-                                 skip_epoch_stats=True,
-                                 logging_interval=250)
+        log_dict = train_autoencoder(num_epochs=NUM_EPOCHS, model=model,
+                                     optimizer=optimizer,
+                                     train_loader=train_loader,
+                                     skip_epoch_stats=True,
+                                     logging_interval=250,
+                                     device=DEVICE)
 
-    # Plotting the training curves
-    plt.plot(log_dict['train_loss_per_batch'], label='Training loss')
-    plt.legend()
-    plt.xlabel('Iteration')
-    plt.ylabel('Loss')
-    plt.title('Training Loss')
-    plt.show()
+        # Save the model
+        torch.save(model.state_dict(), 'autoencoder.pth')
+
+        # Plotting the training curves
+        plt.plot(log_dict['train_loss_per_batch'], label='Training loss')
+        plt.legend()
+        plt.xlabel('Iteration')
+        plt.ylabel('Loss')
+        plt.title('Training Loss')
+        plt.show()
 
     # Testing the model
     print("Testing the model")
     for images, labels in test_loader:
         # images = images.view(images.size(0), -1)
-        outputs = model(images)
+        outputs = model(images.to(device))
         break
 
-    images = images.detach().numpy()
-    outputs = outputs.detach().numpy()
+    images = images.cpu().detach().numpy()
+    outputs = outputs.cpu().detach().numpy()
 
     n_images = 5
     plt.figure(figsize=(20, 4))
@@ -154,10 +180,10 @@ if __name__ == '__main__':
 
     # Visualizing the latent space
     for images, labels in test_loader:
-        outputs = model.encoder(images)
+        outputs = model.encoder(images.to(device))
         break
 
-    outputs = outputs.detach().numpy()
+    outputs = outputs.cpu().detach().numpy()
     plt.figure(figsize=(10, 10))
     plt.scatter(outputs[:, 0], outputs[:, 1], c=labels, cmap='tab10')
     plt.colorbar()
